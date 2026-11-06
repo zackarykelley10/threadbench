@@ -704,7 +704,7 @@ const Engine = (() => {
         if (jmp) { val(0); val(0); jmp = false; }
         u8(0xfe); u8(0xb0); u8(two ? 2 : 1); two = !two;
       } else if (cm === EN) { u8(255); break; }
-      if (cm !== TR) init = false;
+      if (cm === ST || cm === CC) init = false;
     }
     const L = B.length - start; B[start + 2] = L & 255; B[start + 3] = (L >> 8) & 255; B[start + 4] = (L >> 16) & 255;
     const icon = [];
@@ -819,15 +819,23 @@ const THREAD_DATA = [{"name": "Brother Embroidery", "t": "000000|900|Black;f0f0f
 (() => {
 const E = Engine;
 const $ = s => document.querySelector(s);
+/* Brother PE770 hoops. w × h is the hoop as shown on screen; field is what the machine sews in one go, in the machine's own
+   direction (the 5 × 7 field stands tall: 130 mm across, 180 mm front to back). "turn" hoops are shown on their side, so their
+   files are turned to fit the machine. The repositionable hoop clips on in three places (top, middle, bottom); each sews one
+   5 × 7 field, the fields overlap, and the fabric stays hooped the whole time. */
+const FIELD57 = [130, 180];
 const HOOPS = {
-  "4x4": { w: 100, h: 100, label: "4 × 4 in" },
-  "8.5x5": { w: 215.9, h: 127, label: "8.5 × 5 in" },
+  "4x4": { w: 100, h: 100, field: [100, 100], name: "4 × 4 in", label: "4 × 4 in" },
+  "5x7": { w: 130, h: 180, field: FIELD57, name: "5 × 7 in", label: "5 × 7 in, tall" },
+  "7x5": { w: 180, h: 130, field: FIELD57, turn: true, name: "5 × 7 in", label: "5 × 7 in, wide" },
+  "5x12": { w: 130, h: 300, field: FIELD57, multi: true, name: "5 × 12 in", label: "5 × 12 in repositionable, tall" },
+  "12x5": { w: 300, h: 130, field: FIELD57, multi: true, turn: true, name: "5 × 12 in", label: "5 × 12 in repositionable, wide" },
 };
 const DENS = { Light: 0.5, Normal: 0.4, Dense: 0.33 };
 const GEOMETRY_PROPS = new Set(["text", "font", "size", "spacing", "lineSpacing", "align", "arc", "style", "borderW", "density", "angle", "letters", "monoStyle", "gap", "mode", "outlineW", "sx", "sy", "rot", "flip", "coverW", "kind", "appFabric", "thr", "fillType", "cell", "motif", "motifSize", "emboss", "embossCell"]);
 
 /* ---------------- state ---------------- */
-const S = { hoop: "8.5x5", unit: "in", fabric: "#f7f6f2", objects: [], sel: null, zoom: 1, pan: [0, 0], brand: 0, splitOn: false, groupColors: false, fmt: "pes" };
+const S = { hoop: "7x5", unit: "in", fabric: "#f7f6f2", objects: [], sel: null, zoom: 1, pan: [0, 0], brand: 0, splitOn: false, groupColors: false, fmt: "pes" };
 const SIM = { on: false, i: 0, total: 0, playing: false, speed: 12, raf: 0 };
 const GEO = new Map();     // geometry for artwork / imported designs, by id
 const FONTS = new Map();   // key -> {name, font, b64?, builtin}
@@ -1228,6 +1236,15 @@ function draw() {
   ctx.strokeStyle = "rgba(40,60,70,.45)"; ctx.setLineDash([5, 4]); ctx.lineWidth = 1;
   ctx.strokeRect(hx, hy, H.w * k, H.h * k); ctx.setLineDash([]);
   const [cx0, cy0] = toScr(0, 0); ctx.strokeStyle = "rgba(40,60,70,.30)"; ctx.beginPath(); ctx.moveTo(cx0 - 8, cy0); ctx.lineTo(cx0 + 8, cy0); ctx.moveTo(cx0, cy0 - 8); ctx.lineTo(cx0, cy0 + 8); ctx.stroke();
+  // repositionable hoop: where the design changes from the top position to the bottom one
+  const MP = H.multi && !SP ? multiPlan() : null;
+  if (MP && MP.pos.length > 1) {
+    const [a1, b1] = MP.ax ? toScr(-H.w / 2, 0) : toScr(0, -H.h / 2), [a2, b2] = MP.ax ? toScr(H.w / 2, 0) : toScr(0, H.h / 2);
+    ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.setLineDash([8, 5]); ctx.beginPath(); ctx.moveTo(a1, b1); ctx.lineTo(a2, b2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = accent; ctx.font = "600 11px " + (cssVar("--f-body") || "sans-serif"); ctx.textBaseline = "middle";
+    if (MP.ax) { ctx.textAlign = "left"; ctx.fillText("Top position ↑", a1 + 6, b1 - 9); ctx.fillText("Bottom position ↓", a1 + 6, b1 + 10); }
+    else { ctx.textAlign = "right"; ctx.fillText("← Top position", a1 - 6, b1 + 10); ctx.textAlign = "left"; ctx.fillText("Bottom position →", a1 + 6, b1 + 10); }
+  }
   ctx.globalAlpha = 1;
   if (SIM.on) { drawSim(); return; }
   // stitches (applique fabric drawn first, under its stitches)
@@ -1367,7 +1384,7 @@ function renderStats() {
     const blocks = absBlocks(), R = E.compile(blocks), D = designBox();
     const fits = fitsHoop(D);
     $("#stats").innerHTML = `<span class="stat">${R.info.n.toLocaleString()} stitches</span><span class="stat">${R.stops.length} stop${R.stops.length === 1 ? "" : "s"}</span><span class="stat">${fmtLen(D[2] - D[0])} × ${fmtLen(D[3] - D[1])} ${S.unit}</span>` +
-      (fits ? `<span class="pill ok">Fits the ${H.label} hoop</span>` : `<span class="pill bad">Bigger than the ${H.label} hoop</span><button class="ghost" id="splitbtn" style="color:var(--accent);font-weight:600">Split into hoopings…</button>`);
+      (fits ? `<span class="pill ok">Fits the ${H.name} hoop${H.multi ? (P => P.pos.length > 1 ? " · 2 positions" : ` · ${P.pos[0].name} position`)(multiPlan()) : ""}</span>` : `<span class="pill bad">Bigger than the ${H.name} hoop</span><button class="ghost" id="splitbtn" style="color:var(--accent);font-weight:600">Split into hoopings…</button>`);
     renderThreads(R);
     if (S.splitOn) renderSplit();
   }, 30);
@@ -1391,7 +1408,7 @@ function renderThreads(R) {
 /* ---------------- splitting across hoopings ---------------- */
 function computeSplit() {
   const H = HOOPS[S.hoop], D = designBox(); if (!D) return null;
-  const W = D[2] - D[0], Ht = D[3] - D[1], uw = H.w - 12, uh = H.h - 12;
+  const W = D[2] - D[0], Ht = D[3] - D[1], uw = H.field[0] - 12, uh = H.field[1] - 12;
   const opt = (tw, th, turned) => ({ cols: Math.max(1, Math.ceil(W / tw - 1e-9)), rows: Math.max(1, Math.ceil(Ht / th - 1e-9)), turned });
   const a = opt(uw, uh, false), b = opt(uh, uw, true);
   const pick = b.cols * b.rows < a.cols * a.rows ? b : a;
@@ -1419,13 +1436,14 @@ function sectionBlocks(sec, turned) {
   if (sec.after.length) out.push({ rgb: mark, stop: true, label: "Line-up crosses for the next hooping", runs: sec.after.map(([x, y]) => E.cross(x, y, 4).map(tf)) });
   return out;
 }
+const splitHoop = () => { const H = HOOPS[S.hoop]; return H.multi ? "5 × 7 in" : H.name; };
 function renderSplit() {
-  const el = $("#splitcard"), SP = computeSplit(), H = HOOPS[S.hoop];
+  const el = $("#splitcard"), SP = computeSplit(), HN = splitHoop();
   if (!SP) { el.hidden = true; return; }
   el.hidden = false;
   const n = SP.sections.length;
   el.innerHTML = `<h2>Split into hoopings <span class="sub">${n} section${n === 1 ? "" : "s"}</span></h2>
-    <p class="hint" style="margin:0">The design is ${fmtLen(SP.W)} × ${fmtLen(SP.H)} ${S.unit}. In the ${H.label} hoop it sews in ${n} hooping${n === 1 ? "" : "s"}, numbered on the hoop.${SP.turned ? " Sections are turned sideways so they fit; turn the fabric to match." : ""}</p>
+    <p class="hint" style="margin:0">The design is ${fmtLen(SP.W)} × ${fmtLen(SP.H)} ${S.unit}. In the ${HN} hoop it sews in ${n} hooping${n === 1 ? "" : "s"}, numbered on the hoop.${SP.turned ? " Sections are turned sideways so they fit; turn the fabric to match." : ""}</p>
     <ol class="steps">
       <li>Mark the full design area on your fabric and hoop section 1.</li>
       <li>Each section ends by sewing small green crosses on the seam. Leave them in.</li>
@@ -1680,28 +1698,85 @@ function zipMany(files) { // files: [{name, data:Uint8Array}] stored without com
 }
 function zipOne(name, data) { return zipMany([{ name, data }]); }
 /* kind: "pes" (zipped when hosted), "zip", "text" */
-async function save(filename, data, kind) {
+async function save(filename, data, kind, note) {
+  const nt = note ? " " + note : "";
   const dl = await downloadsApi();
   if (dl) {
     const isPes = kind === "pes" || kind === true;
     const fname = isPes ? filename.replace(/\.(pes|dst|exp|jef)$/i, ".zip") : filename;
     const blob = isPes ? zipOne(filename, data) : data instanceof Blob ? data : new Blob([data]);
-    try { await dl.save({ filename: fname, data: blob }); toast(isPes ? `Saved ${fname}. Open the zip to get ${filename} for your machine.` : `Saved ${fname}`); }
+    try { await dl.save({ filename: fname, data: blob }); toast((isPes ? `Saved ${fname}. Open the zip to get ${filename} for your machine.` : `Saved ${fname}.`) + nt); }
     catch (e) { if (e && e.code === "declined") return; toast("Couldn't save the file here (" + ((e && e.message) || "unavailable") + "). Use the downloaded Threadbench file to save PES directly.", "err"); }
     return;
   }
   if (window.claude) { toast("Saving isn't available in this view. Open Threadbench from the downloaded file to save.", "err"); return; }
   const a = document.createElement("a"); a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type: "application/octet-stream" })); a.download = filename;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  toast("Saved " + filename);
+  toast("Saved " + filename + "." + nt);
 }
 const safeName = () => (($("#dname").value || "Design").trim().replace(/[\\/:*?"<>|]+/g, "-") || "Design");
 $("#savepes").onclick = () => {
   if (!S.objects.length) { toast("Add something to the hoop first.", "err"); return; }
   const blocks = absBlocks(), R = E.compile(blocks), H = HOOPS[S.hoop];
-  if (!fitsHoop(designBox())) { toast(`This design is bigger than the ${H.label} hoop. Move or shrink it, or save it in sections with Split into hoopings.`, "err"); openSplit(); return; }
-  save(safeName() + "." + S.fmt, writeFmt(R, safeName()), "pes");
+  if (!fitsHoop(designBox())) { toast(`This design is bigger than the ${H.name} hoop. Move or shrink it, or save it in sections with Split into hoopings.`, "err"); openSplit(); return; }
+  if (H.multi) { saveMulti(); return; }
+  save(safeName() + "." + S.fmt, writeFmt(H.turn ? turned(R) : R, safeName()), "pes", H.turn ? TURN_NOTE : "");
 };
+/* ---------------- files for the machine ---------------- */
+const TURN_NOTE = "It's turned on its side to fit the machine: hoop the fabric with the top of the design toward the right of the hoop.";
+function turned(R) { return { ...R, S: R.S.map(([x, y, c]) => [0 - y, x, c]) }; } // top of the design ends up on the right
+function anchored(R, field) { // start with jumps to two opposite corners of the field, so the machine places the file by the whole field and every stitch lands where it was designed
+  const hw = Math.round((field[0] / 2 - 0.5) * 10), hh = Math.round((field[1] / 2 - 0.5) * 10);
+  return { ...R, S: [[-hw, -hh, E.JU], [hw, hh, E.JU], ...R.S] };
+}
+// which positions of the repositionable hoop a design needs: one if it fits in one field, else top and bottom (they reach the whole hoop)
+function multiPlan() {
+  const H = HOOPS[S.hoop], D = designBox(); if (!H.multi || !D) return null;
+  const ax = H.w > H.h ? 0 : 1, L = ax ? H.h : H.w, fl = Math.max(...H.field), step = (L - fl) / 2, e = 0.05;
+  const pos = [["top", -step], ["middle", 0], ["bottom", step]].map(([name, c]) => ({ name, c, lo: c - fl / 2, hi: c + fl / 2 }));
+  const one = [pos[1], pos[0], pos[2]].find(p => D[ax] >= p.lo - e && D[ax + 2] <= p.hi + e);
+  return { ax, pos: one ? [one] : [pos[0], pos[2]] };
+}
+function multiSections(P) { // whole stitch runs go to a position that holds them; only runs too long for either are cut at the middle
+  const blocks = absBlocks(); if (P.pos.length === 1) return [{ p: P.pos[0], blocks }];
+  const [A, B] = P.pos, ax = P.ax, e = 0.05, big = 1e6, secA = [], secB = [];
+  const rA = ax ? [-big, A.lo, big, 0] : [A.lo, -big, 0, big], rB = ax ? [-big, 0, big, B.hi] : [0, -big, B.hi, big];
+  for (const b of blocks) {
+    const ra = [], rb = [];
+    for (const r of b.runs) {
+      let lo = 1e9, hi = -1e9; for (const p of r) { lo = Math.min(lo, p[ax]); hi = Math.max(hi, p[ax]); }
+      const inA = lo >= A.lo - e && hi <= A.hi + e, inB = lo >= B.lo - e && hi <= B.hi + e;
+      if (inA && (!inB || lo + hi < 0)) ra.push(r);
+      else if (inB) rb.push(r);
+      else { ra.push(...E.clipRuns([r], ...rA)); rb.push(...E.clipRuns([r], ...rB)); }
+    }
+    if (ra.length) secA.push({ ...b, runs: ra }); if (rb.length) secB.push({ ...b, runs: rb });
+  }
+  return [{ p: A, blocks: secA }, { p: B, blocks: secB }].filter(x => x.blocks.length);
+}
+function multiFiles() {
+  const H = HOOPS[S.hoop], P = multiPlan(), name = safeName();
+  const secs = multiSections(P);
+  return secs.map(({ p, blocks }, i) => {
+    const cx = P.ax ? 0 : p.c, cy = P.ax ? p.c : 0;
+    let R = E.compile(blocks.map(b => ({ ...b, runs: b.runs.map(r => r.map(([x, y]) => [x - cx, y - cy])) })));
+    if (H.turn) R = turned(R);
+    R = anchored(R, H.field);
+    return { p, R, name: secs.length === 1 ? `${name} - ${p.name} position.${S.fmt}` : `${name} - ${i + 1} ${p.name} position.${S.fmt}` };
+  });
+}
+function saveMulti() {
+  const H = HOOPS[S.hoop], name = safeName(), F = multiFiles();
+  if (F.length === 1) { save(F[0].name, writeFmt(F[0].R, name), "pes", `Clip the hoop on at the ${F[0].p.name} position.` + (H.turn ? " " + TURN_NOTE : "")); return; }
+  const guide = [`${name}: ${H.name} repositionable hoop, ${F.length} positions`, "",
+    "Hoop the fabric once. Leave it in the hoop for every file.",
+    H.turn ? "The files are turned on their side to fit the machine. Hoop the fabric with the top of the design toward the right of the hoop." : "", "",
+    ...F.map((f, i) => `${i + 1}. Clip the hoop on at the ${f.p.name} position and sew "${f.name}"  (${f.R.info.n.toLocaleString()} stitches, ${f.R.stops.length} stop${f.R.stops.length === 1 ? "" : "s"}).`), "",
+    "Each file sews in the right place on its own. Don't move the design on the machine's screen."];
+  const files = F.map(f => ({ name: f.name, data: writeFmt(f.R, name) }));
+  files.push({ name: `${name} - hoop positions.txt`, data: guide.filter((l, i, a) => l !== "" || a[i - 1] !== "").join("\r\n") });
+  save(`${name} - ${F.length} positions.zip`, zipMany(files), "zip", "Open the zip; the guide inside lists which position each file sews in.");
+}
 function writeFmt(R, label) {
   if (S.fmt === "dst") return E.writeDST(R.S, label);
   if (S.fmt === "exp") return E.writeEXP(R.S);
@@ -1713,8 +1788,8 @@ function openSplit() { if (!S.objects.length) return; S.splitOn = true; S.sel = 
 function closeSplit() { S.splitOn = false; $("#splitcard").hidden = true; renderAll(); }
 function saveSplit() {
   const SP = computeSplit(); if (!SP) return;
-  const name = safeName(), n = SP.sections.length, files = [], H = HOOPS[S.hoop];
-  const guide = [`${name}: ${n} hooping${n === 1 ? "" : "s"} in the ${H.label} hoop`, `Whole design: ${fmtLen(SP.W)} x ${fmtLen(SP.H)} ${S.unit}`, SP.turned ? "Each section is turned sideways to fit the hoop. Turn the fabric to match." : "", "",
+  const name = safeName(), n = SP.sections.length, files = [], HN = splitHoop();
+  const guide = [`${name}: ${n} hooping${n === 1 ? "" : "s"} in the ${HN} hoop`, `Whole design: ${fmtLen(SP.W)} x ${fmtLen(SP.H)} ${S.unit}`, SP.turned ? "Each section is turned sideways to fit the hoop. Turn the fabric to match." : "", "",
     "1. Mark the full design area on the fabric and hoop section 1.",
     "2. Each section ends by sewing small crosses on the seam. Leave them in.",
     "3. Re-hoop for the next section. It starts by sewing the same crosses: move the design with the machine's arrow keys until the needle lands on the first crosses, then sew.",
@@ -1879,7 +1954,7 @@ function saveWorksheet() {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(name)} worksheet</title>
 <style>body{font:14px/1.45 "Segoe UI",system-ui,sans-serif;color:#1b2730;background:#fff;margin:28px auto;max-width:920px;padding:0 16px}h1{font-size:24px;margin:0 0 4px}.meta{color:#5a6873;margin:0 0 16px}img{display:block;max-width:100%;border:1px solid #d3dce1;border-radius:8px;margin:0 auto}table{border-collapse:collapse;width:100%;margin-top:18px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #e3e8eb;font-size:13px;vertical-align:middle}th{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:#5a6873}.n{text-align:right;font-variant-numeric:tabular-nums}.sw{display:inline-block;width:20px;height:20px;border-radius:4px;border:1px solid rgba(0,0,0,.2)}.foot{color:#5a6873;font-size:12px;margin-top:18px}@media print{body{margin:0 auto}}</style></head><body>
 <h1>${esc(name)}</h1>
-<p class="meta">${(w / 25.4).toFixed(2)} × ${(h / 25.4).toFixed(2)} in (${w.toFixed(0)} × ${h.toFixed(0)} mm) · ${R.info.n.toLocaleString()} stitches · ${R.stops.length} stops · ${esc(H.label)} hoop · ${esc(B)} threads</p>
+<p class="meta">${(w / 25.4).toFixed(2)} × ${(h / 25.4).toFixed(2)} in (${w.toFixed(0)} × ${h.toFixed(0)} mm) · ${R.info.n.toLocaleString()} stitches · ${R.stops.length} stops · ${esc(H.name)} hoop · ${esc(B)} threads</p>
 <img src="${P.url}" alt="Preview of ${esc(name)}">
 <table><thead><tr><th>Stop</th><th></th><th>Number</th><th>Thread</th><th>Sews</th><th class="n">Stitches</th></tr></thead><tbody>${rows}</tbody></table>
 <p class="foot">Made with Threadbench. Use your browser's Print command to print this sheet. Screen colors are approximate.</p>
@@ -1892,7 +1967,7 @@ function saveWorksheet() {
 S.objects.push(Object.assign(newText("Your Name"), { size: 24 }));
 S.sel = S.objects[0].id;
 renderAll(); commit();
-window.__tb = { S, E, gen, absBlocks, FONTS, addArt, addStitchFile, loadProject, newText, newMono, addObject };
+window.__tb = { S, E, gen, absBlocks, FONTS, addArt, addStitchFile, loadProject, newText, newMono, addObject, renderAll, designBox, multiPlan, HOOPS };
 })();
 
 </script>
