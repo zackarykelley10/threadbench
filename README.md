@@ -18,6 +18,6 @@ Open it at **https://zackarykelley10.github.io/threadbench/**. It works on compu
 
 ## Credits
 
-- Fonts: Montserrat, Playfair Display, Great Vibes and Dancing Script, under the SIL Open Font License
+- Fonts: Montserrat, Playfair Display, Great Vibes, Dancing Script, Oswald (Vernon Adams) and ChunkFive (Meredith Mandel, The League of Moveable Type), under the [SIL Open Font License 1.1](https://openfontlicense.org). Oswald and ChunkFive are also in the `fonts` folder.
 - Font reading: [opentype.js](https://github.com/opentypejs/opentype.js), MIT License
 - Thread color charts: from the [Ink/Stitch](https://github.com/inkstitch/inkstitch) project
