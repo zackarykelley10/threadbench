@@ -17,6 +17,10 @@ Open it at **https://zackarykelley10.github.io/threadbench/**. It works on compu
 - Saves full Brother PES stitch files (hoop size, thread names and numbers, and preview pictures for the machine's screen), plus DST, EXP and JEF
 - On computers, Save opens a Save window so you can pick a folder or a USB stick
 
+## Copyright
+
+Copyright © 2026 Zackary Kelley. All rights reserved. You may use Threadbench at the link above to make designs for personal or commercial use, and the designs you make are yours. The code may not be copied, changed, republished or sold without written permission. See [LICENSE](LICENSE) for the full terms. The fonts and other components listed under Credits keep their own licenses.
+
 ## Credits
 
 - Embroidery fonts: converted with [Ink/Stitch](https://inkstitch.org) from the free [Ink/Stitch embroidery fonts](https://github.com/inkstitch/embroidery-fonts). Each keeps its own license (SIL Open Font License, CC-BY-SA 4.0 or public domain); see `fonts/emb/CREDITS.md` and the license files in each font's folder.

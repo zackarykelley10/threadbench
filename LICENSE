@@ -1,0 +1,46 @@
+Threadbench
+Copyright (c) 2026 Zackary Kelley. All rights reserved.
+
+This software, including its source code, design, user interface and text
+(the "Software"), is the property of Zackary Kelley and is protected by
+copyright law.
+
+Permission to use
+You may use the Software through its official website,
+https://zackarykelley10.github.io/threadbench/, or through a copy of the
+Threadbench page downloaded from that website, to create embroidery designs
+for personal or commercial purposes. Designs and stitch files you make with
+the Software belong to you.
+
+Restrictions
+Except as stated above, no permission is granted. Without prior written
+permission from Zackary Kelley, you may not:
+  - copy, reproduce or republish the Software or any part of its source code;
+  - modify, adapt, translate or create derivative works based on it;
+  - distribute, sell, license, rent or host the Software, or any part of it,
+    for others to use;
+  - remove or alter this notice or any copyright notice in the Software;
+  - present the Software, or any part of it, as your own work.
+
+Viewing this repository on GitHub, or forking it within GitHub as GitHub's
+Terms of Service allow, does not grant any of these rights.
+
+Third-party components
+Some files and components are owned by others and are used under their own
+licenses, which are not changed by this notice. They are listed under
+"Credits" in README.md and include:
+  - the embroidery fonts in fonts/emb (SIL Open Font License, CC-BY-SA or
+    public domain; see fonts/emb/CREDITS.md and the license files in each
+    font folder);
+  - the fonts in the fonts folder and the built-in fonts (SIL Open Font
+    License 1.1);
+  - opentype.js (MIT License);
+  - the thread color charts, from the Ink/Stitch project.
+
+No warranty
+The Software is provided "as is", without warranty of any kind. Zackary Kelley
+is not liable for any damage, including damage to fabric, garments or
+machines, arising from its use.
+
+For permission requests, contact Zackary Kelley through
+https://github.com/zackarykelley10.
