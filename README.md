@@ -13,7 +13,8 @@ Open it at **https://zackarykelley10.github.io/threadbench/**. It works on compu
 - Thread charts for 10 brands, thread lists and printable worksheets
 - Stitch-out simulator
 - Split large designs across several hoopings, or across the positions of the 5 × 12 repositionable hoop
-- Saves PES, DST, EXP and JEF
+- Saves full Brother PES stitch files (hoop size, thread names and numbers, and preview pictures for the machine's screen), plus DST, EXP and JEF
+- On computers, Save opens a Save window so you can pick a folder or a USB stick
 
 ## Credits
 

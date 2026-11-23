@@ -135,9 +135,9 @@ details.more[open] summary{margin-bottom:8px}
     <button class="ghost" id="undo" title="Undo (Ctrl+Z)">Undo</button>
     <button class="ghost" id="redo" title="Redo (Ctrl+Y)">Redo</button>
     <button id="open">Open…</button>
-    <button id="saveproj">Save project</button>
+    <button id="saveproj" title="Save everything so you can open and edit it again later">Save working file</button>
     <select id="fmt" aria-label="File format" title="File format"><option value="pes">PES (Brother)</option><option value="dst">DST (Tajima)</option><option value="exp">EXP (Melco)</option><option value="jef">JEF (Janome)</option></select>
-    <button class="primary" id="savepes">Save PES</button>
+    <button class="primary" id="savepes" title="Save a Brother stitch file (PES) for your machine">Save stitch file</button>
     <input type="file" id="file" hidden accept=".svg,.pes,.dst,.json,.tbproj,.ttf,.otf,.woff">
   </header>
 
@@ -663,41 +663,106 @@ const Engine = (() => {
     });
     return bi;
   }
-  function writePES(S, threads, label) {
-    const B = [], u8 = v => B.push(v & 255), u16 = v => { u8(v); u8(v >> 8); }, u24 = v => { u16(v); u8(v >> 16); };
-    const str = s => { for (const ch of s) u8(ch.charCodeAt(0) & 127); };
-    str("#PES0001"); u8(0x16); for (let i = 0; i < 13; i++) u8(0);
-    const lab = (label || "Design").replace(/[^ -~]/g, "").slice(0, 16).padEnd(16);
-    str("LA:" + lab + "\r"); for (let i = 0; i < 12; i++) u8(32); u8(255); u8(0); u8(6); u8(38);
+  /* PES v6 + PEC, the full stitch-file layout design programs write: design header with hoop and
+     named threads, sewing sections, the machine's stitch block, and preview pictures for the machine's screen.
+     opts: { field: [w, h] mm (the hoop's sewing field), info: [{code, name, brand}] per stop } */
+  function writePES(S, threads, label, opts) {
+    opts = opts || {};
+    const B = [], u8 = v => B.push(v & 255), u16 = v => { u8(v); u8(v >> 8); }, u24 = v => { u16(v); u8(v >> 16); }, u32 = v => { u16(v & 0xFFFF); u16((v >>> 16) & 0xFFFF); };
+    const f32 = v => { const b = new Uint8Array(new Float32Array([v]).buffer); b.forEach(x => B.push(x)); };
+    const ascii = s => String(s || "").normalize("NFKD").replace(/[^\x20-\x7e]/g, "");
+    const str = s => { for (const ch of s) u8(ch.charCodeAt(0)); };
+    const s8 = s => { s = ascii(s).slice(0, 255); u8(s.length); str(s); };
+    const s16 = s => { u16(s.length); str(s); };
+    const name = ascii(label || "Design").trim() || "Design";
+    const field = opts.field || [130, 180], big = field[0] > 101 || field[1] > 101;
+    const info = opts.info || [];
+    let [a, b, c, d] = extents(S); if (a > c) { a = b = c = d = 0; }
+    const W = Math.round(c - a), Ht = Math.round(d - b);
+
+    /* ---- PES design section ---- */
+    str("#PES0060"); const pecAt = B.length; u32(0);
+    u16(big ? 1 : 0); str("02");                                         // hoop: 0 = 100 x 100, 1 = 130 x 180
+    s8(name); s8(""); s8(""); s8(""); s8("Made with Threadbench");      // name, category, author, keywords, comments
+    u16(0); u16(0); u16(Math.round(field[0])); u16(Math.round(field[1])); u16(0);
+    u16(0xC8); u16(0xC8); u16(0x64); u16(0x64); u16(0x64); u16(0x07); u16(0x13); u16(1); u16(1); u16(0); u16(100); u16(1); u16(0);
+    u8(0); f32(1); f32(0); f32(0); f32(1); f32(0); f32(0);
+    u16(0); u16(0); u16(0);
+    u16(threads.length);
+    threads.forEach((t, i) => {
+      const I = info[i] || {};
+      s8(I.code || ""); u8(t[0]); u8(t[1]); u8(t[2]); u8(0); u32(0xA); s8(I.name || ""); s8(I.brand || ""); s8(I.brand || "");
+    });
+    const hasStitches = S.some(s => s[2] === ST);
+    let colorlog = [];
+    if (!hasStitches) { u16(0); u16(0); u16(0); }
+    else {
+      u16(1); u16(0xFFFF); u16(0);
+      s16("CEmbOne");
+      for (let i = 0; i < 8; i++) u16(0);
+      const hw = field[0] * 10, hh = field[1] * 10;
+      f32(1); f32(0); f32(0); f32(1); f32(350 + hw / 2 - W / 2); f32(100 + Ht + hh / 2 - Ht / 2); // placement on the design page
+      u16(1); u16(0); u16(0); u16(W); u16(Ht); for (let i = 0; i < 8; i++) u8(0);
+      const secAt = B.length; u16(0);
+      u16(0xFFFF); u16(0);
+      s16("CSewSeg");
+      // sections: stitch runs (flag 0) and jumps (flag 1), in design coordinates from the top-left
+      let sections = 0, color = 0, sx = 0, sy = 0, prev = -1, k = 0;
+      const ax = x => Math.round(x - a), ay = y => Math.round(y - d);
+      const section = (flag, pts) => {
+        if (sections) u16(0x8003);
+        if (color !== prev) { colorlog.push([sections, color]); prev = color; }
+        u16(flag); u16(color); u16(pts.length); for (const [x, y] of pts) { u16(ax(x)); u16(ay(y)); }
+        sections++;
+      };
+      while (k < S.length) {
+        const cmd = S[k][2];
+        if (cmd === ST) {
+          let pts = [];
+          while (k < S.length && S[k][2] === ST) { pts.push([S[k][0], S[k][1]]); if (pts.length === 30000) { section(0, pts); pts = [pts[pts.length - 1]]; } k++; }
+          if (pts.length) section(0, pts);
+          sx = S[k - 1][0]; sy = S[k - 1][1];
+        } else if (cmd === JU) {
+          let last = null; while (k < S.length && S[k][2] === JU) { last = S[k]; k++; }
+          section(1, [[sx, sy], [last[0], last[1]]]);
+        } else if (cmd === CC) { color++; k++; }
+        else if (cmd === EN) break;
+        else k++;
+      }
+      u16(colorlog.length); for (const [s, cc] of colorlog) { u16(s); u16(cc); }
+      B[secAt] = sections & 255; B[secAt + 1] = (sections >> 8) & 255;
+      u16(0); u16(0);
+      u32(0); u32(0); colorlog.forEach((_, i) => { u32(i); u32(0); });
+    }
+    const pec = B.length; B[pecAt] = pec & 255; B[pecAt + 1] = (pec >> 8) & 255; B[pecAt + 2] = (pec >> 16) & 255; B[pecAt + 3] = (pec >>> 24) & 255;
+
+    /* ---- PEC section: what the machine reads ---- */
+    str("LA:" + name.slice(0, 8).padEnd(16) + "\r"); for (let i = 0; i < 12; i++) u8(32); u8(255); u8(0); u8(6); u8(38);
     const used = new Set();
     const idx = threads.map(t => { const i = nearestPal(t, used.size < 60 ? used : null); used.add(i); return i + 1; });
     for (let i = 0; i < 12; i++) u8(32); u8(Math.max(0, idx.length - 1)); idx.forEach(u8); for (let i = idx.length; i < 463; i++) u8(32);
-    let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
-    for (const [x, y, m] of S) { if (m > JU) continue; a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y); }
-    if (a > c) { a = b = c = d = 0; }
     const start = B.length;
-    u8(0); u8(0); u24(0); u8(0x31); u8(255); u8(0xf0); u16(Math.round(c - a)); u16(Math.round(d - b)); u16(0x1E0); u16(0x1B0);
+    u8(0); u8(0); u24(0); u8(0x31); u8(255); u8(0xf0); u16(W); u16(Ht); u16(0x1E0); u16(0x1B0);
     const val = (v, l, f) => { if (!l && v > -64 && v < 63) u8(v & 127); else { v = (v & 0xFFF) | 0x8000 | (f << 8); u8(v >> 8); u8(v); } };
     let jmp = true, init = true, two = true, xx = 0, yy = 0;
     for (const [x, y, cm] of S) {
       let dx = 0, dy = 0;
       if (cm <= JU) { dx = Math.round(x - xx); dy = Math.round(y - yy); }
       if (cm === ST) {
-        // long stitches are split so each move fits the format
         const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 120));
-        for (let k = 0; k < n; k++) {
-          const sx = Math.round(dx * (k + 1) / n) - Math.round(dx * k / n), sy = Math.round(dy * (k + 1) / n) - Math.round(dy * k / n);
-          if (jmp) { if (sx && sy) { val(0); val(0); } jmp = false; }
-          val(sx); val(sy);
+        for (let q = 0; q < n; q++) {
+          const ssx = Math.round(dx * (q + 1) / n) - Math.round(dx * q / n), ssy = Math.round(dy * (q + 1) / n) - Math.round(dy * q / n);
+          if (jmp) { if (ssx && ssy) { val(0); val(0); } jmp = false; }
+          val(ssx); val(ssy);
         }
         xx += dx; yy += dy;
       } else if (cm === JU) {
         jmp = true;
         const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 2000));
-        for (let k = 0; k < n; k++) {
-          const f = init && k === 0 ? 0x10 : 0x20;
-          val(Math.round(dx * (k + 1) / n) - Math.round(dx * k / n), 1, f);
-          val(Math.round(dy * (k + 1) / n) - Math.round(dy * k / n), 1, f);
+        for (let q = 0; q < n; q++) {
+          const f = init && q === 0 ? 0x10 : 0x20;
+          val(Math.round(dx * (q + 1) / n) - Math.round(dx * q / n), 1, f);
+          val(Math.round(dy * (q + 1) / n) - Math.round(dy * q / n), 1, f);
         }
         xx += dx; yy += dy;
       } else if (cm === CC) {
@@ -707,15 +772,40 @@ const Engine = (() => {
       if (cm === ST || cm === CC) init = false;
     }
     const L = B.length - start; B[start + 2] = L & 255; B[start + 3] = (L >> 8) & 255; B[start + 4] = (L >> 16) & 255;
-    const icon = [];
-    for (let r = 0; r < 38; r++) {
-      let row = [0, 0, 0, 0, 0, 0];
-      if (r === 1 || r === 36) row = [240, 255, 255, 255, 255, 15];
-      else if (r === 2 || r === 35) row = [8, 0, 0, 0, 0, 16];
-      else if (r > 2 && r < 35) row = [4, 0, 0, 0, 0, 32];
-      icon.push(...row);
+
+    // preview pictures (48 x 38, 1 bit): the whole design, then one per thread stop
+    const frame = () => {
+      const g = new Uint8Array(6 * 38);
+      for (let r = 0; r < 38; r++) {
+        let row = null;
+        if (r === 1 || r === 36) row = [240, 255, 255, 255, 255, 15];
+        else if (r === 2 || r === 35) row = [8, 0, 0, 0, 0, 16];
+        else if (r > 2 && r < 35) row = [4, 0, 0, 0, 0, 32];
+        if (row) g.set(row, r * 6);
+      }
+      return g;
+    };
+    const sc = Math.min(39 / Math.max(1, c - a), 31 / Math.max(1, d - b)), ox = 24 - (a + c) / 2 * sc, oy = 18.5 - (b + d) / 2 * sc;
+    const dot = (g, x, y) => { x = Math.floor(x); y = Math.floor(y); if (x >= 4 && x <= 43 && y >= 3 && y <= 34) g[y * 6 + (x >> 3)] |= 1 << (x & 7); };
+    const line = (g, p, q) => { const n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) * 1.5)); for (let i = 0; i <= n; i++) dot(g, p[0] + (q[0] - p[0]) * i / n, p[1] + (q[1] - p[1]) * i / n); };
+    const pics = [frame()]; let cur = frame(), last = null;
+    for (const [x, y, cm] of S) {
+      if (cm === CC) { pics.push(cur); cur = frame(); last = null; continue; }
+      if (cm === EN) break;
+      if (cm !== ST) { if (cm === JU) last = null; continue; }
+      const p = [x * sc + ox, y * sc + oy];
+      if (last) { line(pics[0], last, p); line(cur, last, p); } else { dot(pics[0], p[0], p[1]); dot(cur, p[0], p[1]); }
+      last = p;
     }
-    for (let i = 0; i <= threads.length; i++) icon.forEach(u8);
+    pics.push(cur);
+    while (pics.length < threads.length + 1) pics.push(frame());
+    for (const g of pics.slice(0, threads.length + 1)) g.forEach(u8);
+
+    /* ---- PES addendum: palette and the true thread colors ---- */
+    u8(Math.max(0, idx.length - 1)); idx.forEach(u8); for (let i = idx.length + 1; i < 128; i++) u8(32);
+    threads.forEach(() => { for (let i = 0; i < 0x90; i++) u8(0); });
+    threads.forEach(t => { u8(t[2]); u8(t[1]); u8(t[0]); });
+    u16(0);
     return new Uint8Array(B);
   }
 
@@ -1698,8 +1788,28 @@ function zipMany(files) { // files: [{name, data:Uint8Array}] stored without com
 }
 function zipOne(name, data) { return zipMany([{ name, data }]); }
 /* kind: "pes" (zipped when hosted), "zip", "text" */
+/* file types for the computer's Save window, like a design program's "Save stitch file" */
+const FILE_TYPES = {
+  pes: ["Brother stitch file (PES)", "application/octet-stream"], dst: ["Tajima stitch file (DST)", "application/octet-stream"],
+  exp: ["Melco stitch file (EXP)", "application/octet-stream"], jef: ["Janome stitch file (JEF)", "application/octet-stream"],
+  json: ["Threadbench working file", "application/json"], zip: ["Zip folder", "application/zip"], csv: ["Thread list (CSV)", "text/csv"],
+  html: ["Web page", "text/html"], svg: ["SVG picture", "image/svg+xml"], txt: ["Text file", "text/plain"]
+};
+const toBlob = (data, type) => data instanceof Blob ? data : new Blob([data], { type: type || "application/octet-stream" });
+async function saveWithPicker(filename, data) { // true = saved, false = cancelled, null = not available here
+  if (window.claude || typeof window.showSaveFilePicker !== "function") return null;
+  const ext = (filename.match(/\.([a-z0-9]+)$/i) || [, ""])[1].toLowerCase(), T = FILE_TYPES[ext];
+  try {
+    const h = await window.showSaveFilePicker({ suggestedName: filename, id: "threadbench-" + (["pes", "dst", "exp", "jef"].includes(ext) ? "stitch" : "files"), types: T ? [{ description: T[0], accept: { [T[1]]: ["." + ext] } }] : undefined });
+    const w = await h.createWritable(); await w.write(toBlob(data, T && T[1])); await w.close();
+    return h.name || filename;
+  } catch (e) { if (e && e.name === "AbortError") return false; return null; }
+}
 async function save(filename, data, kind, note) {
   const nt = note ? " " + note : "";
+  const picked = await saveWithPicker(filename, data);
+  if (picked === false) return;
+  if (picked) { toast("Saved " + picked + "." + nt); return; }
   const dl = await downloadsApi();
   if (dl) {
     const isPes = kind === "pes" || kind === true;
@@ -1710,9 +1820,20 @@ async function save(filename, data, kind, note) {
     return;
   }
   if (window.claude) { toast("Saving isn't available in this view. Open Threadbench from the downloaded file to save.", "err"); return; }
-  const a = document.createElement("a"); a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type: "application/octet-stream" })); a.download = filename;
+  const a = document.createElement("a"); a.href = URL.createObjectURL(toBlob(data)); a.download = filename;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   toast("Saved " + filename + "." + nt);
+}
+async function saveMany(zipName, files, note) {
+  if (!window.claude && typeof window.showDirectoryPicker === "function") {
+    try {
+      const dir = await window.showDirectoryPicker({ id: "threadbench-stitch", mode: "readwrite" });
+      for (const f of files) { const h = await dir.getFileHandle(f.name, { create: true }), w = await h.createWritable(); await w.write(toBlob(f.data)); await w.close(); }
+      toast(`Saved ${files.length} files to the ${dir.name} folder.` + (note ? " " + note.replace(/^Open the zip; the guide inside/, "The guide") : ""));
+      return;
+    } catch (e) { if (e && e.name === "AbortError") return; }
+  }
+  save(zipName, zipMany(files), "zip", note);
 }
 const safeName = () => (($("#dname").value || "Design").trim().replace(/[\\/:*?"<>|]+/g, "-") || "Design");
 $("#savepes").onclick = () => {
@@ -1775,15 +1896,18 @@ function saveMulti() {
     "Each file sews in the right place on its own. Don't move the design on the machine's screen."];
   const files = F.map(f => ({ name: f.name, data: writeFmt(f.R, name) }));
   files.push({ name: `${name} - hoop positions.txt`, data: guide.filter((l, i, a) => l !== "" || a[i - 1] !== "").join("\r\n") });
-  save(`${name} - ${F.length} positions.zip`, zipMany(files), "zip", "Open the zip; the guide inside lists which position each file sews in.");
+  saveMany(`${name} - ${F.length} positions.zip`, files, "Open the zip; the guide inside lists which position each file sews in.");
 }
 function writeFmt(R, label) {
   if (S.fmt === "dst") return E.writeDST(R.S, label);
   if (S.fmt === "exp") return E.writeEXP(R.S);
   if (S.fmt === "jef") return E.writeJEF(R.S, R.th);
-  return E.writePES(R.S, R.th, label);
+  // full Brother stitch file: hoop size, and each stop's thread name, number and brand
+  const brand = THREADS[S.brand].name;
+  const info = (R.stops || []).map(st => { const t = threadForStop(st); return { code: t.code, name: t.name, brand }; });
+  return E.writePES(R.S, R.th, label, { field: HOOPS[S.hoop].field, info });
 }
-$("#fmt").onchange = e => { S.fmt = e.target.value; $("#savepes").textContent = "Save " + S.fmt.toUpperCase(); };
+$("#fmt").onchange = e => { S.fmt = e.target.value; $("#savepes").title = "Save a " + FILE_TYPES[S.fmt][0].toLowerCase().replace(/^(\w+)/, m => m[0].toUpperCase() + m.slice(1)) + " for your machine"; };
 function openSplit() { if (!S.objects.length) return; S.splitOn = true; S.sel = null; closePicker(); renderAll(); $("#splitcard").scrollIntoView({ block: "nearest" }); }
 function closeSplit() { S.splitOn = false; $("#splitcard").hidden = true; renderAll(); }
 function saveSplit() {
@@ -1800,7 +1924,7 @@ function saveSplit() {
     guide.push(`Section ${i + 1}: ${nm}  (${R.info.n.toLocaleString()} stitches, ${R.stops.length} stops)`);
   });
   files.push({ name: `${name} - hooping guide.txt`, data: guide.filter((l, i) => l !== "" || i > 2).join("\r\n") });
-  save(`${name} - ${n} hoopings.zip`, zipMany(files), "zip");
+  saveMany(`${name} - ${n} hoopings.zip`, files, "Open the zip; the guide inside lists the order to sew the sections.");
 }
 function saveThreadList() {
   const rows = S._threadRows || []; if (!rows.length) return;
@@ -1832,7 +1956,7 @@ $("#saveproj").onclick = () => {
   const geo = {}, fonts = {};
   for (const o of S.objects) { if (o.geo) geo[o.geo] = GEO.get(o.geo); if (o.font && !FONTS.get(o.font)?.builtin && FONTS.get(o.font)) fonts[o.font] = { name: FONTS.get(o.font).name, b64: FONTS.get(o.font).b64 }; }
   const data = JSON.stringify({ app: "threadbench", v: 1, name: $("#dname").value, hoop: S.hoop, fabric: S.fabric, objects: S.objects, geo, fonts });
-  save(safeName() + " project.json", data, false);
+  save(safeName() + " working file.json", data, "text");
 };
 function loadProject(text) {
   let P; try { P = JSON.parse(text); } catch (e) { toast("That project file couldn't be read.", "err"); return; }
