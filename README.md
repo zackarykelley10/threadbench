@@ -6,7 +6,8 @@ Open it at **https://zackarykelley10.github.io/threadbench/**. It works on compu
 
 ## What it does
 
-- Lettering with built-in fonts or your own font files, curved text and monograms
+- 15 ready-made embroidery fonts with satin letters (block, serif, script and monogram styles), stitched by hand by their makers, at sizes from about 1/6 in to 1 1/2 in tall. They download the first time you use them.
+- Lettering with computer fonts or your own font files, curved text and monograms
 - Applique shapes, letters and artwork, with cutting templates
 - SVG artwork to stitches; open and combine PES and DST designs
 - Solid, cross-stitch, motif and embossed fills
@@ -18,6 +19,7 @@ Open it at **https://zackarykelley10.github.io/threadbench/**. It works on compu
 
 ## Credits
 
+- Embroidery fonts: converted with [Ink/Stitch](https://inkstitch.org) from the free [Ink/Stitch embroidery fonts](https://github.com/inkstitch/embroidery-fonts). Each keeps its own license (SIL Open Font License, CC-BY-SA 4.0 or public domain); see `fonts/emb/CREDITS.md` and the license files in each font's folder.
 - Fonts: Montserrat, Playfair Display, Great Vibes, Dancing Script, Oswald (Vernon Adams) and ChunkFive (Meredith Mandel, The League of Moveable Type), under the [SIL Open Font License 1.1](https://openfontlicense.org). Oswald and ChunkFive are also in the `fonts` folder.
 - Font reading: [opentype.js](https://github.com/opentypejs/opentype.js), MIT License
 - Thread color charts: from the [Ink/Stitch](https://github.com/inkstitch/inkstitch) project
